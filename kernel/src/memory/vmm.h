@@ -4,7 +4,7 @@
 #include "paging.h"
 
 // Initializes the Virtual Memory Manager.
-// Removed the non-existent limine_stack_response parameter.
+// Reverted to use limine_executable_address_response
 void vmm_init(limine_memmap_response *memmap, limine_hhdm_response *hhdm, limine_executable_address_response *executable_addr);
 
 // Maps a virtual page to a physical page in the given page map (PML4).

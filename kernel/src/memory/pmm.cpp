@@ -74,24 +74,39 @@ void pmm_init(limine_memmap_response *memmap, limine_hhdm_response *hhdm) {
         bitmap_size++;
     }
 
-    uint64_t hhdm_offset = hhdm->offset;
-
+    // --- Find a safe place for the bitmap ---
+    // First, find the highest physical address used by the kernel.
+    uint64_t kernel_end = 0;
     for (uint64_t i = 0; i < memmap->entry_count; i++) {
         limine_memmap_entry* entry = memmap->entries[i];
-        if (entry->type == LIMINE_MEMMAP_USABLE && entry->length >= bitmap_size) {
+        if (entry->type == LIMINE_MEMMAP_EXECUTABLE_AND_MODULES) {
+            uint64_t top = entry->base + entry->length;
+            if (top > kernel_end) {
+                kernel_end = top;
+            }
+        }
+    }
+
+    // Now, find a usable region for the bitmap that comes *after* the kernel.
+    for (uint64_t i = 0; i < memmap->entry_count; i++) {
+        limine_memmap_entry* entry = memmap->entries[i];
+        if (entry->type == LIMINE_MEMMAP_USABLE && entry->length >= bitmap_size && entry->base >= kernel_end) {
             pmm_bitmap_phys_addr = entry->base;
-            pmm_bitmap = (uint8_t*)(pmm_bitmap_phys_addr + hhdm_offset);
-            break;
+            pmm_bitmap = (uint8_t*)(pmm_bitmap_phys_addr + hhdm->offset);
+            break; 
         }
     }
 
     if (pmm_bitmap == nullptr) {
-        print_string("FATAL: Could not find space for PMM bitmap!\n", 0xFF0000);
+        fb_print_string("FATAL: Could not find safe space for PMM bitmap!\n", 0xFF0000);
         for(;;);
     }
     
+    // --- Initialize the bitmap safely ---
+    // 1. Mark all pages as used.
     memset(pmm_bitmap, 0xFF, bitmap_size);
 
+    // 2. Mark all usable pages as free.
     for (uint64_t i = 0; i < memmap->entry_count; i++) {
         limine_memmap_entry* entry = memmap->entries[i];
         if (entry->type == LIMINE_MEMMAP_USABLE) {
@@ -101,42 +116,54 @@ void pmm_init(limine_memmap_response *memmap, limine_hhdm_response *hhdm) {
         }
     }
     
-    uint64_t bitmap_pages = bitmap_size / PAGE_SIZE;
-    if (bitmap_size % PAGE_SIZE != 0) {
-        bitmap_pages++;
-    }
+    // 3. Re-lock the pages used by the bitmap itself.
+    uint64_t bitmap_pages = (bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
     for (uint64_t i = 0; i < bitmap_pages; i++) {
         set_frame((pmm_bitmap_phys_addr / PAGE_SIZE) + i);
     }
 
-    print_string("PMM Initialized.\n", 0x00FFFF00);
+    // 4. Re-lock the pages used by the kernel and modules.
+    for (uint64_t i = 0; i < memmap->entry_count; i++) {
+        limine_memmap_entry* entry = memmap->entries[i];
+        if (entry->type == LIMINE_MEMMAP_EXECUTABLE_AND_MODULES) {
+            for (uint64_t j = 0; j < entry->length; j += PAGE_SIZE) {
+                set_frame((entry->base + j) / PAGE_SIZE);
+            }
+        }
+    }
+
+    // 5. Explicitly lock the first page (page 0) to prevent null pointer issues.
+    set_frame(0);
+
+    fb_print_string("PMM Initialized.\n", 0x00FFFF00);
     char buffer[32];
     
-    print_string("Total Memory: ", 0x00FFFFFF);
+    fb_print_string("Total Memory: ", 0x00FFFFFF);
     u64_to_str(total_memory / 1024 / 1024, buffer);
-    print_string(buffer, 0x00FFFFFF);
-    print_string(" MB\n", 0x00FFFFFF);
+    fb_print_string(buffer, 0x00FFFFFF);
+    fb_print_string(" MB\n", 0x00FFFFFF);
 
-    print_string("Usable Memory: ", 0x00FFFFFF);
+    fb_print_string("Usable Memory: ", 0x00FFFFFF);
     u64_to_str(usable_memory / 1024 / 1024, buffer);
-    print_string(buffer, 0x00FFFFFF);
-    print_string(" MB\n", 0x00FFFFFF);
+    fb_print_string(buffer, 0x00FFFFFF);
+    fb_print_string(" MB\n", 0x00FFFFFF);
     
-    print_string("System Reserved: ", 0x00FFFFFF);
+    fb_print_string("System Reserved: ", 0x00FFFFFF);
     u64_to_str(system_reserved_memory / 1024 / 1024, buffer);
-    print_string(buffer, 0x00FFFFFF);
-    print_string(" MB\n", 0x00FFFFFF);
+    fb_print_string(buffer, 0x00FFFFFF);
+    fb_print_string(" MB\n", 0x00FFFFFF);
 }
 
 void* pmm_alloc_frame() {
-    for (uint64_t i = last_allocated_page; i < total_pages; i++) {
+    // Start searching from page 1 to avoid allocating the null page.
+    for (uint64_t i = (last_allocated_page == 0) ? 1 : last_allocated_page; i < total_pages; i++) {
         if (!test_frame(i)) {
             set_frame(i);
             last_allocated_page = i + 1;
             return (void*)(i * PAGE_SIZE);
         }
     }
-    for (uint64_t i = 0; i < last_allocated_page; i++) {
+    for (uint64_t i = 1; i < last_allocated_page; i++) {
         if (!test_frame(i)) {
             set_frame(i);
             last_allocated_page = i + 1;
