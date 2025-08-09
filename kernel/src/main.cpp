@@ -11,6 +11,7 @@
 #include "interrupts/idt.h"
 #include "interrupts/interrupts.h"
 #include "devices/keyboard.h"
+#include "lib/io.h" // Include io.h for inb
 
 LIMINE_BASE_REVISION(3);
 
@@ -89,25 +90,37 @@ extern "C" void kmain() {
     
     // Initialize GDT, IDT, and PICs
     interrupts_init();
+    fb_swap_buffers();
     
     // Initialize the keyboard driver
     keyboard_init();
+    fb_swap_buffers();
 
-    // Enable interrupts now that everything is set up
+    // After keyboard init, flush the PS/2 data port one last time to clear any pending IRQs.
+    // This is a crucial step to prevent an immediate interrupt after 'sti'.
+    fb_print_string("Flushing PS/2 data port before enabling interrupts.\n", 0x00FFFF00);
+    fb_swap_buffers();
+    while (inb(0x64) & 1) {
+        inb(0x60);
+    }
+    fb_print_string("PS/2 data port flushed. Enabling interrupts.\n", 0x00FFFF00);
+    fb_swap_buffers();
+    
+    // Enable interrupts now that everything is set up.
     asm volatile ("sti");
+    fb_print_string("Interrupts enabled.\n", 0x00FFFF00);
+    fb_swap_buffers();
 
     fb_print_string("\n--- Keyboard Test ---\n", 0x0000FFFF);
     fb_draw_string_at("Type something!", 10, global_framebuffer->height - 40, 0x00FFFFFF);
     fb_swap_buffers(); 
 
     for (;;) {
-        char c = keyboard_getchar();
-        if (c != 0) {
+        char c;
+        while ((c = keyboard_getchar()) != 0) {
             fb_print_char(c, 0xFFFFFF);
-            fb_draw_rect(0, global_framebuffer->height - 20, global_framebuffer->width, 20, 0x000000);
-            fb_draw_string_at("You typed: ", 10, global_framebuffer->height - 20, 0x00FFFFFF);
-            fb_draw_char_at(c, 11 * FONT_WIDTH, global_framebuffer->height - 20, 0x0000FF00);
-            fb_swap_buffers();
         }
+        fb_swap_buffers();
+        asm ("hlt");
     }
 }

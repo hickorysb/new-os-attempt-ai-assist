@@ -31,6 +31,7 @@ static void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags
 void interrupts_init() {
     gdt_init();
     fb_print_string("GDT Initialized.\n", 0x00FFFF00);
+    fb_swap_buffers();
 
     idt_ptr.limit = (sizeof(IdtEntry) * IDT_ENTRIES) - 1;
     idt_ptr.base  = (uint64_t)&idt_entries;
@@ -41,14 +42,15 @@ void interrupts_init() {
         idt_set_gate(i, (uint64_t)isr_stub_table[i], 0x08, 0x8E);
     }
     
-    pic_init();
-    fb_print_string("PIC Remapped.\n", 0x00FFFF00);
-
     idt_load((uint64_t)&idt_ptr);
     fb_print_string("IDT Initialized.\n", 0x00FFFF00);
+    fb_swap_buffers();
+    
+    pic_init();
+    fb_print_string("PIC Remapped.\n", 0x00FFFF00);
+    fb_swap_buffers();
 }
 
-// Corrected to accept a pointer to the registers struct.
 extern "C" void interrupt_handler(registers_t* regs) {
     if (interrupt_handlers[regs->int_no] != 0) {
         isr_t handler = interrupt_handlers[regs->int_no];
@@ -59,12 +61,11 @@ extern "C" void interrupt_handler(registers_t* regs) {
         u64_to_str(regs->int_no, buffer);
         fb_print_string(buffer, 0xFF0000);
         fb_print_string("\n", 0xFF0000);
+        fb_swap_buffers();
         for(;;); // Halt
     }
-
-    if (regs->int_no >= 32 && regs->int_no < 48) {
-        pic_send_eoi(regs->int_no - 32);
-    }
+    
+    // We removed the generic EOI call here. It is now handled by the specific device driver.
 }
 
 void register_interrupt_handler(uint8_t n, isr_t handler) {

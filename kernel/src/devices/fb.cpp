@@ -155,6 +155,11 @@ void fb_print_char(char c, uint32_t color) {
     if (c == '\n') {
         console_cursor_x = 0;
         console_cursor_y += FONT_HEIGHT;
+    } else if (c == '\b') { // Handle backspace
+        if (console_cursor_x > 0) {
+            console_cursor_x -= FONT_WIDTH;
+            fb_draw_rect(console_cursor_x, console_cursor_y, FONT_WIDTH, FONT_HEIGHT, 0x000000);
+        }
     } else if (c >= 32 && c <= 126) {
         fb_draw_char_at(c, console_cursor_x, console_cursor_y, color);
         console_cursor_x += FONT_WIDTH;
