@@ -1,27 +1,25 @@
 #pragma once
-
 #include <cstdint>
 
-// Defines an entry in the Interrupt Descriptor Table for x86_64.
-// This structure tells the CPU where to find the handler for each interrupt.
+// Defines an entry in the IDT for x86_64.
 struct IdtEntry {
-    uint16_t isr_low;    // The lower 16 bits of the ISR's address.
-    uint16_t kernel_cs;  // The GDT segment selector that the CPU will load into CS before calling the ISR.
-    uint8_t  ist;        // Interrupt Stack Table offset.
-    uint8_t  attributes; // Type and attribute flags.
-    uint16_t isr_mid;    // The middle 16 bits of the ISR's address.
-    uint32_t isr_high;   // The upper 32 bits of the ISR's address.
-    uint32_t reserved;   // Set to zero.
+    uint16_t isr_low;
+    uint16_t kernel_cs;
+    uint8_t  ist;
+    uint8_t  attributes;
+    uint16_t isr_mid;
+    uint32_t isr_high;
+    uint32_t reserved;
 } __attribute__((packed));
 
-// A pointer structure for the 'lidt' instruction, which loads our IDT.
+// A pointer structure for the 'lidt' instruction.
 struct IdtPtr {
-    uint16_t limit; // Size of the IDT in bytes - 1.
-    uint64_t base;  // The linear address of the IDT.
+    uint16_t limit;
+    uint64_t base;
 } __attribute__((packed));
-
 
 /**
- * @brief Initializes the Interrupt Descriptor Table and loads it.
+ * @brief Initializes the GDT, IDT, and PICs.
+ * This is the central function for setting up all interrupt handling.
  */
-void idt_init();
+void interrupts_init();

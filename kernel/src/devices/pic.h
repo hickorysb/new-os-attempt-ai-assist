@@ -1,5 +1,12 @@
 #pragma once
 
+// I/O port addresses for the PICs
+#define PIC1_COMMAND 0x20
+#define PIC1_DATA    0x21
+#define PIC2_COMMAND 0xA0
+#define PIC2_DATA    0xA1
+#define PIC_EOI      0x20 // End-of-Interrupt command code
+
 /**
  * @brief Initializes and remaps the master and slave PICs.
  * This is crucial to prevent conflicts between hardware interrupts (IRQs)

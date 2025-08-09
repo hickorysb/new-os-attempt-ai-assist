@@ -9,12 +9,11 @@
 #include "memory/pmm.h"
 #include "memory/vmm.h"
 #include "interrupts/idt.h"
+#include "interrupts/interrupts.h"
 #include "devices/keyboard.h"
 
-// Set the base revision to 3, supported by the Limine boot protocol.
 LIMINE_BASE_REVISION(3);
 
-// --- Limine Requests ---
 static volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
     .revision = 0,
@@ -39,28 +38,24 @@ static volatile struct limine_executable_address_request executable_address_requ
     .response = nullptr
 };
 
-// Halt and catch fire function.
 namespace {
 void hcf() {
-    asm ("cli"); // Disable interrupts before halting
+    asm ("cli");
     for (;;) {
         asm ("hlt");
     }
 }
 }
 
-// C++ ABI stubs.
 extern "C" {
     int __cxa_atexit(void (*)(void *), void *, void *) { return 0; }
     void __cxa_pure_virtual() { hcf(); }
     void *__dso_handle;
 }
 
-// Extern declarations for global constructors array.
 extern void (*__init_array[])();
 extern void (*__init_array_end[])();
 
-// Kernel entry point
 extern "C" void kmain() {
     if (LIMINE_BASE_REVISION_SUPPORTED == false) {
         hcf();
@@ -78,20 +73,9 @@ extern "C" void kmain() {
 
     fb_print_string("Framebuffer initialized.\n", 0x00FFFFFF);
 
-    if (hhdm_request.response == nullptr) {
-        fb_print_string("ERROR: Failed to get HHDM response.\n", 0x00FF0000);
-        hcf();
-    }
-
-    if (memmap_request.response == nullptr) {
-        fb_print_string("ERROR: Failed to get memory map.\n", 0x00FF0000);
-        hcf();
-    }
-
-    if (executable_address_request.response == nullptr) {
-        fb_print_string("ERROR: Failed to get kernel address response.\n", 0x00FF0000);
-        hcf();
-    }
+    if (hhdm_request.response == nullptr) { hcf(); }
+    if (memmap_request.response == nullptr) { hcf(); }
+    if (executable_address_request.response == nullptr) { hcf(); }
 
     uint32_t eax, ebx, ecx, edx;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx) || !(edx & (1 << 0))) {
@@ -103,25 +87,24 @@ extern "C" void kmain() {
     vmm_init(memmap_request.response, hhdm_request.response, executable_address_request.response);
     fb_init_double_buffer();
     
-    // Initialize the interrupt descriptor table and keyboard.
-    idt_init();
+    // Initialize GDT, IDT, and PICs
+    interrupts_init();
+    
+    // Initialize the keyboard driver
     keyboard_init();
 
-    // Enable interrupts now that all handlers are set up.
+    // Enable interrupts now that everything is set up
     asm volatile ("sti");
 
     fb_print_string("\n--- Keyboard Test ---\n", 0x0000FFFF);
     fb_draw_string_at("Type something!", 10, global_framebuffer->height - 40, 0x00FFFFFF);
-    fb_swap_buffers(); // Show the initial message
+    fb_swap_buffers(); 
 
-    // Simple loop to echo keyboard input.
     for (;;) {
         char c = keyboard_getchar();
         if (c != 0) {
-            // Print the character to the scrolling console part of the screen.
             fb_print_char(c, 0xFFFFFF);
-            // Also update the static text at the bottom.
-            fb_draw_rect(0, global_framebuffer->height - 20, global_framebuffer->width, 20, 0x000000); // Clear old text
+            fb_draw_rect(0, global_framebuffer->height - 20, global_framebuffer->width, 20, 0x000000);
             fb_draw_string_at("You typed: ", 10, global_framebuffer->height - 20, 0x00FFFFFF);
             fb_draw_char_at(c, 11 * FONT_WIDTH, global_framebuffer->height - 20, 0x0000FF00);
             fb_swap_buffers();

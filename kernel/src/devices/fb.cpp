@@ -7,6 +7,7 @@
 #include "../lib/memory/memory.h"
 #include "../memory/pmm.h"
 #include "../memory/vmm.h"
+#include "../memory/paging.h" // Include for invlpg
 
 // --- Global State ---
 limine_framebuffer *global_framebuffer = nullptr;
@@ -76,9 +77,18 @@ void fb_init_double_buffer() {
         }
         uintptr_t virt_addr = back_buffer_virt_addr + (i * PAGE_SIZE);
         vmm_map_page(current_pml4_virt, virt_addr, (uintptr_t)phys_frame, PTE_PRESENT | PTE_WRITABLE);
+        
+        // We modified the page tables, so we need to invalidate the TLB entry
+        // for the newly mapped page so the CPU sees the change.
+        invlpg((void*)virt_addr);
     }
 
     back_buffer = (uint32_t*)back_buffer_virt_addr;
+    
+    // Copy the contents of the front buffer to the new back buffer
+    // to preserve the existing screen content.
+    memcpy(back_buffer, global_framebuffer->address, back_buffer_size_bytes);
+
     double_buffer_enabled = true;
     fb_print_string("Double buffering enabled.\n", 0x00FF00);
 }

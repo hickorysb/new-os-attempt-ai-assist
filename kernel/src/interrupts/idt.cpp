@@ -1,55 +1,72 @@
 #include "idt.h"
+#include "interrupts.h"
+#include "gdt.h"
 #include "../lib/memory/memory.h"
-#include "../devices/fb.h"
 #include "../devices/pic.h"
+#include "../devices/fb.h"
+#include "../lib/sys_utils.h"
 
 #define IDT_ENTRIES 256
 
-// The Interrupt Descriptor Table itself.
-static IdtEntry idt[IDT_ENTRIES];
-// A pointer to the IDT that we'll load using 'lidt'.
-static IdtPtr idt_ptr;
+static IdtEntry idt_entries[IDT_ENTRIES];
+static IdtPtr   idt_ptr;
+static isr_t    interrupt_handlers[IDT_ENTRIES];
 
-// The table of ISR stubs defined in our assembly file.
+// These symbols are defined in our assembly file.
 extern "C" {
     extern void* isr_stub_table[];
+    extern void idt_load(uint64_t);
 }
 
-/**
- * @brief Sets a gate (entry) in the IDT.
- * @param n The index of the gate to set (0-255).
- * @param isr_addr The address of the interrupt service routine.
- * @param selector The kernel code segment selector.
- * @param flags The attribute flags for this gate.
- */
-static void idt_set_gate(uint8_t n, uint64_t isr_addr, uint16_t selector, uint8_t flags) {
-    idt[n].isr_low    = (isr_addr & 0xFFFF);
-    idt[n].kernel_cs  = selector;
-    idt[n].ist        = 0;
-    idt[n].attributes = flags;
-    idt[n].isr_mid    = (isr_addr >> 16) & 0xFFFF;
-    idt[n].isr_high   = (isr_addr >> 32) & 0xFFFFFFFF;
-    idt[n].reserved   = 0;
+static void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
+    idt_entries[num].isr_low    = (uint16_t)(base & 0xFFFF);
+    idt_entries[num].isr_mid    = (uint16_t)((base >> 16) & 0xFFFF);
+    idt_entries[num].isr_high   = (uint32_t)((base >> 32) & 0xFFFFFFFF);
+    idt_entries[num].kernel_cs  = sel;
+    idt_entries[num].ist        = 0;
+    idt_entries[num].attributes = flags;
+    idt_entries[num].reserved   = 0;
 }
 
-void idt_init() {
-    idt_ptr.limit = sizeof(IdtEntry) * IDT_ENTRIES - 1;
-    idt_ptr.base  = (uint64_t)&idt;
+void interrupts_init() {
+    gdt_init();
+    fb_print_string("GDT Initialized.\n", 0x00FFFF00);
 
-    memset(&idt, 0, sizeof(IdtEntry) * IDT_ENTRIES);
+    idt_ptr.limit = (sizeof(IdtEntry) * IDT_ENTRIES) - 1;
+    idt_ptr.base  = (uint64_t)&idt_entries;
 
-    // Remap the PIC before we start setting up IRQ handlers.
-    pic_init();
+    memset(&idt_entries, 0, sizeof(IdtEntry) * IDT_ENTRIES);
 
-    // Loop through the first 48 ISR stubs (32 exceptions + 16 IRQs)
-    // and create an IDT entry for each one.
-    for (uint8_t i = 0; i < 48; i++) {
-        // 0x08 is the kernel code segment selector.
-        // 0x8E means the gate is present, has a ring level of 0 (kernel), and is a 64-bit interrupt gate.
+    for (uint16_t i = 0; i < IDT_ENTRIES; i++) {
         idt_set_gate(i, (uint64_t)isr_stub_table[i], 0x08, 0x8E);
     }
     
-    // Load our new IDT.
-    asm volatile ("lidt %0" :: "m"(idt_ptr));
+    pic_init();
+    fb_print_string("PIC Remapped.\n", 0x00FFFF00);
+
+    idt_load((uint64_t)&idt_ptr);
     fb_print_string("IDT Initialized.\n", 0x00FFFF00);
+}
+
+// Corrected to accept a pointer to the registers struct.
+extern "C" void interrupt_handler(registers_t* regs) {
+    if (interrupt_handlers[regs->int_no] != 0) {
+        isr_t handler = interrupt_handlers[regs->int_no];
+        handler(regs);
+    } else if (regs->int_no < 32) {
+        fb_print_string("Unhandled exception: ", 0xFF0000);
+        char buffer[32];
+        u64_to_str(regs->int_no, buffer);
+        fb_print_string(buffer, 0xFF0000);
+        fb_print_string("\n", 0xFF0000);
+        for(;;); // Halt
+    }
+
+    if (regs->int_no >= 32 && regs->int_no < 48) {
+        pic_send_eoi(regs->int_no - 32);
+    }
+}
+
+void register_interrupt_handler(uint8_t n, isr_t handler) {
+    interrupt_handlers[n] = handler;
 }

@@ -39,3 +39,12 @@ struct PageTableEntry {
 struct PageTable {
     PageTableEntry entries[512];
 };
+
+/**
+ * @brief Invalidates a single page in the TLB.
+ * This is necessary after changing a page table entry for an active page map.
+ * @param m The virtual address of the page to invalidate.
+ */
+static inline void invlpg(void* m) {
+    asm volatile ("invlpg (%0)" :: "r"(m) : "memory");
+}
